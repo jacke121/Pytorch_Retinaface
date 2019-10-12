@@ -1,14 +1,15 @@
+import argparse
+import time
+
 import torch
 import torch.nn as nn
-import torchvision.models.detection.backbone_utils as backbone_utils
-import torchvision.models._utils as _utils
 import torch.nn.functional as F
-from collections import OrderedDict
 
+from data import cfg_mnet, cfg_shuffle
 from models.net import MobileNetV1 as MobileNetV1
 from models.net import FPN as FPN
 from models.net import SSH as SSH
-
+from models.shufflenet_yolo import ShuffleNetV2
 
 
 class ClassHead(nn.Module):
@@ -54,22 +55,28 @@ class RetinaFace(nn.Module):
         super(RetinaFace,self).__init__()
         self.phase = phase
         backbone = None
-        if cfg['name'] == 'mobilenet0.25':
-            backbone = MobileNetV1()
-            if cfg['pretrain']:
-                checkpoint = torch.load("./weights/mobilenetV1X0.25_pretrain.tar", map_location=torch.device('cpu'))
-                from collections import OrderedDict
-                new_state_dict = OrderedDict()
-                for k, v in checkpoint['state_dict'].items():
-                    name = k[7:]  # remove module.
-                    new_state_dict[name] = v
-                # load params
-                backbone.load_state_dict(new_state_dict)
+        if cfg['name'] == 'ShuffleNet':
+
+            self.body = ShuffleNetV2(scale=1, in_channels=3, c_tag=0.5, num_classes=2, activation=nn.ReLU,
+                                 SE=False, residual=False).cuda()
+
+        elif cfg['name'] == 'mobilenet0.25':
+            self.body = MobileNetV1()
+            # if cfg['pretrain']:
+            #     checkpoint = torch.load("./weights/mobilenetV1X0.25_pretrain.tar", map_location=torch.device('cpu'))
+            #     from collections import OrderedDict
+            #     new_state_dict = OrderedDict()
+            #     for k, v in checkpoint['state_dict'].items():
+            #         name = k[7:]  # remove module.
+            #         new_state_dict[name] = v
+            #     # load params
+            #     backbone.load_state_dict(new_state_dict)
         elif cfg['name'] == 'Resnet50':
             import torchvision.models as models
             backbone = models.resnet50(pretrained=cfg['pretrain'])
+            # self.body = _utils.IntermediateLayerGetter(backbone, cfg['return_layers'])
 
-        self.body = _utils.IntermediateLayerGetter(backbone, cfg['return_layers'])
+
         in_channels_stage2 = cfg['in_channel']
         in_channels_list = [
             in_channels_stage2 * 2,
@@ -125,3 +132,35 @@ class RetinaFace(nn.Module):
         else:
             output = (bbox_regressions, F.softmax(classifications, dim=-1), ldm_regressions)
         return output
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='Retinaface')
+
+    parser.add_argument('-m', '--trained_model', default='weights/mobilenet0.25_Final.pth',
+                        type=str, help='Trained state_dict file path to open')
+    parser.add_argument('--network', default='ShuffleNet', help='Backbone network mobile0.25 or resnet50')
+    parser.add_argument('--cpu', action="store_true", default=False, help='Use cpu inference')
+    parser.add_argument('--confidence_threshold', default=0.98, type=float, help='confidence_threshold')
+    parser.add_argument('--top_k', default=15, type=int, help='top_k')
+    parser.add_argument('--nms_threshold', default=0.2, type=float, help='nms_threshold')
+    parser.add_argument('--keep_top_k', default=12, type=int, help='keep_top_k')
+    parser.add_argument('-s', '--save_image', action="store_true", default=True, help='show detection results')
+    parser.add_argument('--vis_thres', default=0.9, type=float, help='visualization_threshold')
+    args = parser.parse_args()
+
+    cfg = None
+    if args.network == "ShuffleNet":
+        cfg = cfg_shuffle
+
+    # net and model
+    model = RetinaFace(cfg=cfg, phase='test')
+    model.cuda()
+    model.eval()
+    x = torch.rand(1, 3, 300, 300).cuda()
+    for i in range(15):
+        t1 = time.time()
+        loc, conf, landms = model(x)
+
+        cnt = time.time() - t1
+        print(cnt, loc.size(), conf.size(), landms.size())

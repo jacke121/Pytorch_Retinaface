@@ -1,8 +1,8 @@
 import time
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
-import torchvision.models._utils as _utils
-import torchvision.models as models
 import torch.nn.functional as F
 from torch.autograd import Variable
 
@@ -122,16 +122,35 @@ class MobileNetV1(nn.Module):
             conv_dw(128, 256, 2), # 219 +3 2 = 241
             conv_dw(256, 256, 1), # 241 + 64 = 301
         )
-        self.avg = nn.AdaptiveAvgPool2d((1,1))
-        self.fc = nn.Linear(256, 1000)
+        # self.avg = nn.AdaptiveAvgPool2d((1,1))
+        # self.fc = nn.Linear(256, 1000)
 
     def forward(self, x):
-        x = self.stage1(x)
-        x = self.stage2(x)
-        x = self.stage3(x)
-        x = self.avg(x)
+        x1 = self.stage1(x)
+        x2 = self.stage2(x1)
+        x3 = self.stage3(x2)
+
+        out = OrderedDict()
+
+        out['stage1'] = x1
+        out['stage2'] = x2
+        out['stage3'] = x3
+        return out
+        # x = self.avg(x)
         # x = self.model(x)
-        x = x.view(-1, 256)
-        x = self.fc(x)
-        return x
+        # x = x.view(-1, 256)
+        # x = self.fc(x)
+        # return x1,x2,x3
+
+if __name__ == '__main__':
+
+    model=MobileNetV1()
+    model.cuda()
+    model.eval()
+    x = torch.rand(1, 3, 300, 300).cuda()
+    for i in range(30):
+        t1 = time.time()
+        out1,out2,out3 = model(x)
+        cnt = time.time() - t1
+        print(out1.size(),out2.size(),out3.size(),cnt)
 
